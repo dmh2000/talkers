@@ -128,7 +128,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 
 		// Route the message
 		if err := routeMessage(registry, clientID, msg); err != nil {
-			log.Printf("Client %s: error routing message to %s: %v", clientID, msg.ToId, err)
+			log.Printf("Error routing message from %s to %s: %v", clientID, msg.ToId, err)
 			// Send error back to sender
 			errorEnv := &proto.Envelope{
 				Payload: &proto.Envelope_Error{
@@ -138,6 +138,9 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 				},
 			}
 			_ = framing.WriteEnvelope(stream, errorEnv)
+		} else {
+			// Log successful message routing
+			log.Printf("Message routed: %s -> %s", clientID, msg.ToId)
 		}
 	}
 }

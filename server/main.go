@@ -15,6 +15,10 @@ import (
 )
 
 func main() {
+	// Configure logging: output to stdout with filename and line number
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
 	// Validate command-line arguments
 	if len(os.Args) != 2 {
 		fmt.Fprintf(os.Stderr, "Usage: %s <ip:port>\n", os.Args[0])
