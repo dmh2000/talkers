@@ -175,6 +175,5 @@ func routeMessage(registry *Registry, sender string, msg *proto.Message) error {
 		return fmt.Errorf("%s: %w", errs.ErrClientDisconnected, err)
 	}
 
-	log.Printf("Message routed from %s to %s (%d characters)", sender, msg.ToId, len(msg.Content))
 	return nil
 }
