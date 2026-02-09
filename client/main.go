@@ -56,7 +56,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: failed to connect to server: %v\n", err)
 		os.Exit(1)
 	}
-	defer conn.CloseWithError(0, "client shutting down")
+	defer func() { _ = conn.CloseWithError(0, "client shutting down") }()
 
 	// Open a bidirectional stream
 	stream, err := conn.OpenStreamSync(ctx)
@@ -64,7 +64,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: failed to open stream: %v\n", err)
 		os.Exit(1)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Send registration message
 	registerEnv := &pb.Envelope{
@@ -150,8 +150,8 @@ func main() {
 
 	// Clean shutdown
 	cancel()
-	stream.Close()
-	conn.CloseWithError(0, "client shutting down")
+	_ = stream.Close()
+	_ = conn.CloseWithError(0, "client shutting down")
 }
 
 // readLoop continuously reads envelopes from the stream and processes them

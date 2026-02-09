@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -19,15 +17,6 @@ import (
 	"github.com/dmh2000/talkers/internal/tlsutil"
 	"github.com/quic-go/quic-go"
 )
-
-// testServer wraps server components for testing
-type testServer struct {
-	listener *quic.Listener
-	addr     string
-	cancel   context.CancelFunc
-	done     chan struct{}
-	registry *Registry
-}
 
 // Registry maintains a thread-safe map of client ID to ClientConn
 // (copied from server package for testing)
@@ -80,10 +69,10 @@ func (r *Registry) Count() int {
 func (r *Registry) Close() {
 	for _, conn := range r.clients {
 		if conn.Stream != nil {
-			conn.Stream.Close()
+			_ = conn.Stream.Close()
 		}
 		if conn.Connection != nil {
-			conn.Connection.CloseWithError(0, "server shutting down")
+			_ = conn.Connection.CloseWithError(0, "server shutting down")
 		}
 	}
 	r.clients = make(map[string]*ClientConn)
@@ -101,7 +90,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 		if clientID != "" {
 			registry.Remove(clientID)
 		}
-		stream.Close()
+		_ = stream.Close()
 	}()
 
 	// Read the first envelope - must be a Register message
@@ -119,7 +108,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 				},
 			},
 		}
-		framing.WriteEnvelope(stream, errorEnv)
+		_ = framing.WriteEnvelope(stream, errorEnv)
 		return
 	}
 
@@ -132,7 +121,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 				},
 			},
 		}
-		framing.WriteEnvelope(stream, errorEnv)
+		_ = framing.WriteEnvelope(stream, errorEnv)
 		return
 	}
 
@@ -149,7 +138,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 				},
 			},
 		}
-		framing.WriteEnvelope(stream, errorEnv)
+		_ = framing.WriteEnvelope(stream, errorEnv)
 		clientID = ""
 		return
 	}
@@ -176,7 +165,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 					},
 				},
 			}
-			framing.WriteEnvelope(stream, errorEnv)
+			_ = framing.WriteEnvelope(stream, errorEnv)
 			return
 		}
 
@@ -188,7 +177,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 					},
 				},
 			}
-			framing.WriteEnvelope(stream, errorEnv)
+			_ = framing.WriteEnvelope(stream, errorEnv)
 		}
 	}
 }
@@ -271,7 +260,7 @@ func startTestServer(t *testing.T) (addr string, shutdown func()) {
 
 	shutdown = func() {
 		cancel()
-		listener.Close()
+		_ = listener.Close()
 		registry.Close()
 		<-done
 	}
@@ -302,7 +291,7 @@ func connectClient(t *testing.T, clientID, serverAddr string) (*quic.Conn, *quic
 
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
-		conn.CloseWithError(0, "failed to open stream")
+		_ = conn.CloseWithError(0, "failed to open stream")
 		t.Fatalf("Failed to open stream: %v", err)
 	}
 
@@ -316,8 +305,8 @@ func connectClient(t *testing.T, clientID, serverAddr string) (*quic.Conn, *quic
 	}
 
 	if err := framing.WriteEnvelope(stream, regEnv); err != nil {
-		stream.Close()
-		conn.CloseWithError(0, "failed to register")
+		_ = stream.Close()
+		_ = conn.CloseWithError(0, "failed to register")
 		t.Fatalf("Failed to send registration: %v", err)
 	}
 
@@ -347,8 +336,8 @@ func expectMessage(t *testing.T, stream *quic.Stream, expectedFrom, expectedCont
 	t.Helper()
 
 	// Set read deadline
-	stream.SetReadDeadline(time.Now().Add(5 * time.Second))
-	defer stream.SetReadDeadline(time.Time{})
+	_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer func() { _ = stream.SetReadDeadline(time.Time{}) }()
 
 	env, err := framing.ReadEnvelope(stream)
 	if err != nil {
@@ -374,8 +363,8 @@ func expectError(t *testing.T, stream *quic.Stream, expectedError string) {
 	t.Helper()
 
 	// Set read deadline
-	stream.SetReadDeadline(time.Now().Add(5 * time.Second))
-	defer stream.SetReadDeadline(time.Time{})
+	_ = stream.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer func() { _ = stream.SetReadDeadline(time.Time{}) }()
 
 	env, err := framing.ReadEnvelope(stream)
 	if err != nil {
@@ -401,8 +390,8 @@ func TestClientRegistration(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	conn, stream := connectClient(t, "alice", addr)
-	defer stream.Close()
-	defer conn.CloseWithError(0, "test complete")
+	defer func() { _ = stream.Close() }()
+	defer func() { _ = conn.CloseWithError(0, "test complete") }()
 
 	// If we get here without error, registration succeeded
 	t.Log("Client registered successfully")
@@ -417,8 +406,8 @@ func TestDuplicateIDRejection(t *testing.T) {
 
 	// Register first client
 	conn1, stream1 := connectClient(t, "alice", addr)
-	defer stream1.Close()
-	defer conn1.CloseWithError(0, "test complete")
+	defer func() { _ = stream1.Close() }()
+	defer func() { _ = conn1.CloseWithError(0, "test complete") }()
 
 	// Try to register second client with same ID
 	tlsConfig := &tls.Config{
@@ -437,13 +426,13 @@ func TestDuplicateIDRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to dial server: %v", err)
 	}
-	defer conn2.CloseWithError(0, "test complete")
+	defer func() { _ = conn2.CloseWithError(0, "test complete") }()
 
 	stream2, err := conn2.OpenStreamSync(ctx)
 	if err != nil {
 		t.Fatalf("Failed to open stream: %v", err)
 	}
-	defer stream2.Close()
+	defer func() { _ = stream2.Close() }()
 
 	// Send registration with duplicate ID
 	regEnv := &pb.Envelope{
@@ -483,8 +472,8 @@ func TestMaxClients(t *testing.T) {
 	// Clean up all clients
 	defer func() {
 		for i := range streams {
-			streams[i].Close()
-			conns[i].CloseWithError(0, "test complete")
+			_ = streams[i].Close()
+			_ = conns[i].CloseWithError(0, "test complete")
 		}
 	}()
 
@@ -505,13 +494,13 @@ func TestMaxClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to dial server: %v", err)
 	}
-	defer conn17.CloseWithError(0, "test complete")
+	defer func() { _ = conn17.CloseWithError(0, "test complete") }()
 
 	stream17, err := conn17.OpenStreamSync(ctx)
 	if err != nil {
 		t.Fatalf("Failed to open stream: %v", err)
 	}
-	defer stream17.Close()
+	defer func() { _ = stream17.Close() }()
 
 	// Send registration
 	regEnv := &pb.Envelope{
@@ -539,13 +528,13 @@ func TestMessageRouting(t *testing.T) {
 
 	// Register Alice
 	connAlice, streamAlice := connectClient(t, "alice", addr)
-	defer streamAlice.Close()
-	defer connAlice.CloseWithError(0, "test complete")
+	defer func() { _ = streamAlice.Close() }()
+	defer func() { _ = connAlice.CloseWithError(0, "test complete") }()
 
 	// Register Bob
 	connBob, streamBob := connectClient(t, "bob", addr)
-	defer streamBob.Close()
-	defer connBob.CloseWithError(0, "test complete")
+	defer func() { _ = streamBob.Close() }()
+	defer func() { _ = connBob.CloseWithError(0, "test complete") }()
 
 	// Allow time for both registrations to complete on server
 	time.Sleep(50 * time.Millisecond)
@@ -566,8 +555,8 @@ func TestUnknownDestination(t *testing.T) {
 
 	// Register Alice
 	connAlice, streamAlice := connectClient(t, "alice", addr)
-	defer streamAlice.Close()
-	defer connAlice.CloseWithError(0, "test complete")
+	defer func() { _ = streamAlice.Close() }()
+	defer func() { _ = connAlice.CloseWithError(0, "test complete") }()
 
 	// Alice sends message to unregistered client
 	sendMessage(t, streamAlice, "charlie", "Hello Charlie!")
@@ -585,12 +574,12 @@ func TestOversizedContent(t *testing.T) {
 
 	// Register Alice and Bob
 	connAlice, streamAlice := connectClient(t, "alice", addr)
-	defer streamAlice.Close()
-	defer connAlice.CloseWithError(0, "test complete")
+	defer func() { _ = streamAlice.Close() }()
+	defer func() { _ = connAlice.CloseWithError(0, "test complete") }()
 
 	connBob, streamBob := connectClient(t, "bob", addr)
-	defer streamBob.Close()
-	defer connBob.CloseWithError(0, "test complete")
+	defer func() { _ = streamBob.Close() }()
+	defer func() { _ = connBob.CloseWithError(0, "test complete") }()
 
 	// Create content > 250,000 characters
 	largeContent := strings.Repeat("a", 250001)
@@ -611,14 +600,14 @@ func TestClientDisconnect(t *testing.T) {
 
 	// Register Alice and Bob
 	connAlice, streamAlice := connectClient(t, "alice", addr)
-	defer streamAlice.Close()
-	defer connAlice.CloseWithError(0, "test complete")
+	defer func() { _ = streamAlice.Close() }()
+	defer func() { _ = connAlice.CloseWithError(0, "test complete") }()
 
 	connBob, streamBob := connectClient(t, "bob", addr)
 
 	// Bob disconnects
-	streamBob.Close()
-	connBob.CloseWithError(0, "client disconnecting")
+	_ = streamBob.Close()
+	_ = connBob.CloseWithError(0, "client disconnecting")
 
 	// Allow server to process disconnection
 	time.Sleep(200 * time.Millisecond)
@@ -638,8 +627,8 @@ func TestServerShutdown(t *testing.T) {
 
 	// Register Alice
 	connAlice, streamAlice := connectClient(t, "alice", addr)
-	defer streamAlice.Close()
-	defer connAlice.CloseWithError(0, "test complete")
+	defer func() { _ = streamAlice.Close() }()
+	defer func() { _ = connAlice.CloseWithError(0, "test complete") }()
 
 	// Shutdown server
 	shutdown()
@@ -648,7 +637,7 @@ func TestServerShutdown(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Try to read from Alice's stream - should get error
-	streamAlice.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_ = streamAlice.SetReadDeadline(time.Now().Add(1 * time.Second))
 	_, err := framing.ReadEnvelope(streamAlice)
 
 	if err == nil {
@@ -685,7 +674,7 @@ func TestServerShutdownWithSIGINT(t *testing.T) {
 		t.Fatalf("Failed to find free port: %v", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	_ = listener.Close()
 
 	serverAddr := fmt.Sprintf("127.0.0.1:%d", port)
 
@@ -756,7 +745,7 @@ func TestServerShutdownWithSIGINT(t *testing.T) {
 
 	// Simulate SIGINT by canceling context and closing
 	cancel()
-	quicListener.Close()
+	_ = quicListener.Close()
 	registry.Close()
 
 	// Wait for server to shutdown
@@ -766,24 +755,15 @@ func TestServerShutdownWithSIGINT(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Try to read from stream - should get error
-	stream.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(1 * time.Second))
 	_, err = framing.ReadEnvelope(stream)
 
 	if err == nil {
 		t.Error("Expected error after SIGINT shutdown, got nil")
 	}
 
-	stream.Close()
-	conn.CloseWithError(0, "test complete")
+	_ = stream.Close()
+	_ = conn.CloseWithError(0, "test complete")
 
 	t.Log("Server shutdown cleanly after SIGINT")
-}
-
-// Helper to send actual SIGINT to a process (for reference, not used in test)
-func sendSIGINT(pid int) error {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
-	return process.Signal(syscall.SIGINT)
 }

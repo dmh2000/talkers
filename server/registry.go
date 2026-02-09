@@ -79,10 +79,10 @@ func (r *Registry) Close() {
 	// Close all client connections
 	for _, conn := range r.clients {
 		if conn.Stream != nil {
-			conn.Stream.Close()
+			_ = conn.Stream.Close()
 		}
 		if conn.Connection != nil {
-			conn.Connection.CloseWithError(0, "server shutting down")
+			_ = conn.Connection.CloseWithError(0, "server shutting down")
 		}
 	}
 

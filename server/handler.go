@@ -29,7 +29,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 			registry.Remove(clientID)
 			log.Printf("Client %s disconnected and removed from registry", clientID)
 		}
-		stream.Close()
+		_ = stream.Close()
 	}()
 
 	// Read the first envelope - must be a Register message
@@ -51,7 +51,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 				},
 			},
 		}
-		framing.WriteEnvelope(stream, errorEnv)
+		_ = framing.WriteEnvelope(stream, errorEnv)
 		return
 	}
 
@@ -66,7 +66,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 				},
 			},
 		}
-		framing.WriteEnvelope(stream, errorEnv)
+		_ = framing.WriteEnvelope(stream, errorEnv)
 		return
 	}
 
@@ -86,7 +86,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 				},
 			},
 		}
-		framing.WriteEnvelope(stream, errorEnv)
+		_ = framing.WriteEnvelope(stream, errorEnv)
 		// Clear clientID so defer doesn't try to remove it
 		clientID = ""
 		return
@@ -122,7 +122,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 					},
 				},
 			}
-			framing.WriteEnvelope(stream, errorEnv)
+			_ = framing.WriteEnvelope(stream, errorEnv)
 			return
 		}
 
@@ -137,7 +137,7 @@ func handleConnection(ctx context.Context, conn *quic.Conn, registry *Registry) 
 					},
 				},
 			}
-			framing.WriteEnvelope(stream, errorEnv)
+			_ = framing.WriteEnvelope(stream, errorEnv)
 		}
 	}
 }
