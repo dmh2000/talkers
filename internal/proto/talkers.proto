@@ -1,0 +1,25 @@
+syntax = "proto3";
+package talkers;
+option go_package = "internal/proto";
+
+message Register {
+  string from = 1;       // client ID, max 32 characters
+}
+
+message Error {
+  string error = 1;      // human-readable error description
+}
+
+message Message {
+  string from_id = 1;    // sending client's ID
+  string to_id   = 2;    // destination client's ID
+  string content = 3;    // message body, max 250,000 characters
+}
+
+message Envelope {
+  oneof payload {
+    Register register = 1;
+    Error    error    = 2;
+    Message  message  = 3;
+  }
+}
