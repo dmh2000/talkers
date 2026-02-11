@@ -20,10 +20,11 @@ import (
 
 const (
 	maxClientIDLength = 32
-	maxContentLength  = 250000
+	maxInputLength    = 256
 
 	colorBlue  = "\033[94m"
 	colorGreen = "\033[92m"
+	colorCyan  = "\033[96m"
 	colorReset = "\033[0m"
 )
 
@@ -31,10 +32,10 @@ func help(msg string) {
 	fmt.Fprintf(os.Stderr, "Error: %s\n\n", msg)
 	fmt.Fprintf(os.Stderr, "Usage: %s <client-id> <server-ip:port> <model> <system-file>\n\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "Arguments:\n")
-	fmt.Fprintf(os.Stderr, "  client-id     Unique identifier for this client (1-%d chars)\n", maxClientIDLength)
+	fmt.Fprintf(os.Stderr, "  client-id       Unique identifier for this client (1-%d chars)\n", maxClientIDLength)
 	fmt.Fprintf(os.Stderr, "  server-ip:port  Address of the talkers server\n")
-	fmt.Fprintf(os.Stderr, "  model         LLM model name (e.g. claude-sonnet-4)\n")
-	fmt.Fprintf(os.Stderr, "  system-file   Path to file containing the AI system prompt\n")
+	fmt.Fprintf(os.Stderr, "  model           LLM model name (e.g. claude-sonnet-4)\n")
+	fmt.Fprintf(os.Stderr, "  system-file     Path to file containing the AI system prompt\n")
 	os.Exit(1)
 }
 
@@ -67,15 +68,13 @@ func main() {
 	}
 	system := string(systemBytes)
 
-	content := []string{} // context for AI queries
-	var contentMu sync.Mutex
+	queryContext := []string{} // context for AI queries
+	var contextMu sync.Mutex
 
 	client, err := ai.AIClient(model)
 	if err != nil {
 		help(fmt.Sprintf("failed to create AI client: %v", err))
 	}
-	_ = client // will be used for AI queries
-	_ = system // will be used with AIQuery
 
 	// Set up context with cancellation for clean shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -127,13 +126,16 @@ func main() {
 	// Channel to signal termination from read loop
 	readDone := make(chan error, 1)
 
-	// Start read loop in a goroutine
-	go readLoop(stream, readDone, &content, &contentMu)
+	// Channel for write loop input (from terminal and AI responses)
+	writeChan := make(chan string, 16)
 
-	// Channel to coordinate shutdown
+	// Start read loop in a goroutine
+	go readLoop(stream, readDone, &queryContext, &contextMu, client, model, system, writeChan)
+
+	// Channel to coordinate shutdown on stdin close
 	shutdownChan := make(chan struct{})
 
-	// Write loop in main goroutine
+	// Terminal input goroutine
 	go func() {
 		defer close(shutdownChan)
 		scanner := bufio.NewScanner(os.Stdin)
@@ -151,44 +153,65 @@ func main() {
 				continue
 			}
 
-			toID := parts[0]
-			msgContent := parts[1]
-
-			// Validate content length
-			if len(msgContent) > maxContentLength {
-				fmt.Fprintf(os.Stderr, "Error: message content exceeds maximum length of %d characters\n", maxContentLength)
+			// Validate input length
+			if len(parts[1]) > maxInputLength {
+				fmt.Fprintf(os.Stderr, "Error: input exceeds maximum length of %d characters\n", maxInputLength)
 				continue
 			}
 
-			// Construct and send message envelope
-			msgEnv := &pb.Envelope{
-				Payload: &pb.Envelope_Message{
-					Message: &pb.Message{
-						FromId:  clientID,
-						ToId:    toID,
-						Content: msgContent,
-					},
-				},
-			}
-
-			if err := framing.WriteEnvelope(stream, msgEnv); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: failed to send message: %v\n", err)
+			select {
+			case writeChan <- line:
+			case <-ctx.Done():
 				return
 			}
-
-			// Add sent message to AI query context
-			contentMu.Lock()
-			content = ai.AIAddContent(content, clientID, msgContent)
-			contentMu.Unlock()
 		}
 
-		// Check for scanner errors
 		if err := scanner.Err(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: reading from stdin: %v\n", err)
 		}
 	}()
 
-	// Wait for shutdown signal, read error, or write completion
+	// Write loop goroutine
+	go func() {
+		for {
+			select {
+			case line := <-writeChan:
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) != 2 {
+					continue
+				}
+
+				toID := parts[0]
+				msgContent := parts[1]
+
+				// Construct and send message envelope
+				msgEnv := &pb.Envelope{
+					Payload: &pb.Envelope_Message{
+						Message: &pb.Message{
+							FromId:  clientID,
+							ToId:    toID,
+							Content: msgContent,
+						},
+					},
+				}
+
+				if err := framing.WriteEnvelope(stream, msgEnv); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: failed to send message: %v\n", err)
+					return
+				}
+
+				// Add sent message to AI query context
+				contextMu.Lock()
+				queryContext = ai.AIAddContext(queryContext, clientID, msgContent)
+				contextMu.Unlock()
+
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Wait for shutdown signal, read error, or stdin close
 	select {
 	case <-sigChan:
 		fmt.Fprintf(os.Stderr, "\nReceived interrupt signal, shutting down...\n")
@@ -197,7 +220,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Read loop terminated: %v\n", err)
 		}
 	case <-shutdownChan:
-		// Write loop completed (stdin closed)
+		// Terminal input closed
 	}
 
 	// Reset terminal color and clean shutdown
@@ -208,7 +231,7 @@ func main() {
 }
 
 // readLoop continuously reads envelopes from the stream and processes them
-func readLoop(stream *quic.Stream, done chan<- error, content *[]string, contentMu *sync.Mutex) {
+func readLoop(stream *quic.Stream, done chan<- error, queryContext *[]string, contextMu *sync.Mutex, aiClient ai.Client, model string, system string, writeChan chan<- string) {
 	defer close(done)
 
 	for {
@@ -234,10 +257,21 @@ func readLoop(stream *quic.Stream, done chan<- error, content *[]string, content
 			msg := payload.Message
 			fmt.Printf("%s[%s]: %s%s\n", colorBlue, msg.GetFromId(), msg.GetContent(), colorGreen)
 
-			// Add received message to AI query context
-			contentMu.Lock()
-			*content = ai.AIAddContent(*content, msg.GetFromId(), msg.GetContent())
-			contentMu.Unlock()
+			// Add received message to AI query context and take a snapshot
+			contextMu.Lock()
+			*queryContext = ai.AIAddContext(*queryContext, msg.GetFromId(), msg.GetContent())
+			contextCopy := make([]string, len(*queryContext))
+			copy(contextCopy, *queryContext)
+			contextMu.Unlock()
+
+			// Query AI and send response to write loop
+			response, err := ai.AIQuery(aiClient, system, contextCopy, model)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: AI query failed: %v\n", err)
+			} else if len(response) > 0 {
+				fmt.Printf("%s[AI]: %s%s\n", colorCyan, response, colorGreen)
+				writeChan <- fmt.Sprintf("%s:%s", msg.GetFromId(), response)
+			}
 
 		case *pb.Envelope_Error:
 			errMsg := payload.Error
