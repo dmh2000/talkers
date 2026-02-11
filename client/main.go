@@ -19,6 +19,10 @@ import (
 const (
 	maxClientIDLength = 32
 	maxContentLength  = 250000
+
+	colorBlue  = "\033[94m"
+	colorGreen = "\033[92m"
+	colorReset = "\033[0m"
 )
 
 func main() {
@@ -51,7 +55,11 @@ func main() {
 		NextProtos:         []string{"talkers"},
 	}
 
-	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, nil)
+	quicConfig := &quic.Config{
+		MaxIdleTimeout: framing.MaxIdleTimeout,
+	}
+
+	conn, err := quic.DialAddr(ctx, serverAddr, tlsConfig, quicConfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: failed to connect to server: %v\n", err)
 		os.Exit(1)
@@ -93,6 +101,9 @@ func main() {
 	go func() {
 		defer close(shutdownChan)
 		scanner := bufio.NewScanner(os.Stdin)
+
+		// Set input color to light green
+		fmt.Print(colorGreen)
 
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -148,7 +159,8 @@ func main() {
 		// Write loop completed (stdin closed)
 	}
 
-	// Clean shutdown
+	// Reset terminal color and clean shutdown
+	fmt.Print(colorReset)
 	cancel()
 	_ = stream.Close()
 	_ = conn.CloseWithError(0, "client shutting down")
@@ -179,7 +191,7 @@ func readLoop(stream *quic.Stream, done chan<- error) {
 		switch payload := env.Payload.(type) {
 		case *pb.Envelope_Message:
 			msg := payload.Message
-			fmt.Printf("[%s]: %s\n", msg.GetFromId(), msg.GetContent())
+			fmt.Printf("%s[%s]: %s%s\n", colorBlue, msg.GetFromId(), msg.GetContent(), colorGreen)
 
 		case *pb.Envelope_Error:
 			errMsg := payload.Error

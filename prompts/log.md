@@ -20,3 +20,12 @@
     - remove build artifacts, including executable files that are built 
   - 'all'
     - execute 'clean', 'lint' and 'build' 
+
+  
+---
+client output
+
+make this change to client/main.go:
+- use terminal control codes to enable color output
+- when printing the output of the messages from other clients (readLoop) the output text should be dark blue
+- when taking input from the command line, text should be colored light green

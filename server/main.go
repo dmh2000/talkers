@@ -8,10 +8,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/quic-go/quic-go"
+	"github.com/dmh2000/talkers/internal/framing"
 	"github.com/dmh2000/talkers/internal/tlsutil"
+	"github.com/quic-go/quic-go"
 )
 
 func main() {
@@ -41,7 +41,7 @@ func main() {
 
 	// Configure QUIC listener
 	quicConfig := &quic.Config{
-		MaxIdleTimeout: 60 * time.Second,
+		MaxIdleTimeout: framing.MaxIdleTimeout,
 	}
 
 	// Create QUIC listener

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 	pb "github.com/dmh2000/talkers/internal/proto"
@@ -12,6 +13,9 @@ import (
 // MaxFrameSize is the maximum allowed size for a single frame.
 // 512 KB accommodates 250K character content (up to 750KB in UTF-8) plus protobuf overhead.
 const MaxFrameSize = 512 * 1024
+
+// MaxIdleTimeout is the QUIC connection idle timeout used by both client and server.
+const MaxIdleTimeout = 6000 * time.Second
 
 // WriteEnvelope serializes the envelope using protobuf, writes a 4-byte big-endian
 // length prefix, then writes the payload bytes to the stream.
