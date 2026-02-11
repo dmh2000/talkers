@@ -15,3 +15,9 @@ tell me if you need more information
   - in 'readLoop', when an Envelope_Message is received, add it to the 'content' variable using the aiAddContent function
   - in the main function, add the message conent to the 'content' variable using aiAddConent function
   - since the content is being updated by both main loop and read loop, it probably needs a mutext around the aiAddConent function. let me know if there is a better way to handle that
+
+
+@main.go i made a mistake. the 'system' argument will be a filename. read the file and 
+  add its contents to a  'system' variable.  make the 'system' and 'model' argument       
+  required instead of using dummy values. use 'system' instead of 'systemPrompt' as the   
+  variable name. if the system file cannot be read then output an error message and exit

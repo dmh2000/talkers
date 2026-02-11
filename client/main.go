@@ -22,43 +22,60 @@ const (
 	maxClientIDLength = 32
 	maxContentLength  = 250000
 
-	defaultModel = "dummy-model"
-
 	colorBlue  = "\033[94m"
 	colorGreen = "\033[92m"
 	colorReset = "\033[0m"
 )
 
+func help(msg string) {
+	fmt.Fprintf(os.Stderr, "Error: %s\n\n", msg)
+	fmt.Fprintf(os.Stderr, "Usage: %s <client-id> <server-ip:port> <model> <system-file>\n\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "Arguments:\n")
+	fmt.Fprintf(os.Stderr, "  client-id     Unique identifier for this client (1-%d chars)\n", maxClientIDLength)
+	fmt.Fprintf(os.Stderr, "  server-ip:port  Address of the talkers server\n")
+	fmt.Fprintf(os.Stderr, "  model         LLM model name (e.g. claude-sonnet-4)\n")
+	fmt.Fprintf(os.Stderr, "  system-file   Path to file containing the AI system prompt\n")
+	os.Exit(1)
+}
+
 func main() {
 	// Parse command-line arguments
-	if len(os.Args) < 3 || len(os.Args) > 4 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <client-id> <server-ip:port> [model]\n", os.Args[0])
-		os.Exit(1)
+	if len(os.Args) != 5 {
+		help("expected 4 arguments")
 	}
 
 	clientID := os.Args[1]
 	serverAddr := os.Args[2]
+	model := os.Args[3]
 
-	model := defaultModel
-	if len(os.Args) == 4 {
-		model = os.Args[3]
+	if len(clientID) > maxClientIDLength {
+		help(fmt.Sprintf("client ID exceeds maximum length of %d characters", maxClientIDLength))
 	}
+	if len(clientID) == 0 {
+		help("client ID cannot be empty")
+	}
+	if len(serverAddr) == 0 {
+		help("server address cannot be empty")
+	}
+	if len(model) == 0 {
+		help("model cannot be empty")
+	}
+
+	systemBytes, err := os.ReadFile(os.Args[4])
+	if err != nil {
+		help(fmt.Sprintf("failed to read system file: %v", err))
+	}
+	system := string(systemBytes)
 
 	content := []string{} // context for AI queries
 	var contentMu sync.Mutex
 
 	client, err := ai.AIClient(model)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: failed to create AI client: %v\n", err)
-		os.Exit(1)
+		help(fmt.Sprintf("failed to create AI client: %v", err))
 	}
 	_ = client // will be used for AI queries
-
-	// Validate client ID length
-	if len(clientID) > maxClientIDLength {
-		fmt.Fprintf(os.Stderr, "Error: client ID exceeds maximum length of %d characters\n", maxClientIDLength)
-		os.Exit(1)
-	}
+	_ = system // will be used with AIQuery
 
 	// Set up context with cancellation for clean shutdown
 	ctx, cancel := context.WithCancel(context.Background())
