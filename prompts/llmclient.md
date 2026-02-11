@@ -6,3 +6,12 @@
   - include all the arguments
 
 tell me if you need more information
+
+
+@main.go @internal/ai/query.go
+- in main.go, do the following:
+  - right after the model variable is set, create a variable "content := []string{} // context for AI queries"
+  - using the model name, create an aiClient
+  - in 'readLoop', when an Envelope_Message is received, add it to the 'content' variable using the aiAddContent function
+  - in the main function, add the message conent to the 'content' variable using aiAddConent function
+  - since the content is being updated by both main loop and read loop, it probably needs a mutext around the aiAddConent function. let me know if there is a better way to handle that

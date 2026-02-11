@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
+	"github.com/dmh2000/talkers/internal/ai"
 	"github.com/dmh2000/talkers/internal/framing"
 	pb "github.com/dmh2000/talkers/internal/proto"
 	"github.com/quic-go/quic-go"
@@ -20,6 +22,8 @@ const (
 	maxClientIDLength = 32
 	maxContentLength  = 250000
 
+	defaultModel = "dummy-model"
+
 	colorBlue  = "\033[94m"
 	colorGreen = "\033[92m"
 	colorReset = "\033[0m"
@@ -27,13 +31,28 @@ const (
 
 func main() {
 	// Parse command-line arguments
-	if len(os.Args) != 3 {
-		fmt.Fprintf(os.Stderr, "Usage: %s <client-id> <server-ip:port>\n", os.Args[0])
+	if len(os.Args) < 3 || len(os.Args) > 4 {
+		fmt.Fprintf(os.Stderr, "Usage: %s <client-id> <server-ip:port> [model]\n", os.Args[0])
 		os.Exit(1)
 	}
 
 	clientID := os.Args[1]
 	serverAddr := os.Args[2]
+
+	model := defaultModel
+	if len(os.Args) == 4 {
+		model = os.Args[3]
+	}
+
+	content := []string{} // context for AI queries
+	var contentMu sync.Mutex
+
+	client, err := ai.AIClient(model)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: failed to create AI client: %v\n", err)
+		os.Exit(1)
+	}
+	_ = client // will be used for AI queries
 
 	// Validate client ID length
 	if len(clientID) > maxClientIDLength {
@@ -92,7 +111,7 @@ func main() {
 	readDone := make(chan error, 1)
 
 	// Start read loop in a goroutine
-	go readLoop(stream, readDone)
+	go readLoop(stream, readDone, &content, &contentMu)
 
 	// Channel to coordinate shutdown
 	shutdownChan := make(chan struct{})
@@ -116,10 +135,10 @@ func main() {
 			}
 
 			toID := parts[0]
-			content := parts[1]
+			msgContent := parts[1]
 
 			// Validate content length
-			if len(content) > maxContentLength {
+			if len(msgContent) > maxContentLength {
 				fmt.Fprintf(os.Stderr, "Error: message content exceeds maximum length of %d characters\n", maxContentLength)
 				continue
 			}
@@ -130,7 +149,7 @@ func main() {
 					Message: &pb.Message{
 						FromId:  clientID,
 						ToId:    toID,
-						Content: content,
+						Content: msgContent,
 					},
 				},
 			}
@@ -139,6 +158,11 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error: failed to send message: %v\n", err)
 				return
 			}
+
+			// Add sent message to AI query context
+			contentMu.Lock()
+			content = ai.AIAddContent(content, clientID, msgContent)
+			contentMu.Unlock()
 		}
 
 		// Check for scanner errors
@@ -167,7 +191,7 @@ func main() {
 }
 
 // readLoop continuously reads envelopes from the stream and processes them
-func readLoop(stream *quic.Stream, done chan<- error) {
+func readLoop(stream *quic.Stream, done chan<- error, content *[]string, contentMu *sync.Mutex) {
 	defer close(done)
 
 	for {
@@ -192,6 +216,11 @@ func readLoop(stream *quic.Stream, done chan<- error) {
 		case *pb.Envelope_Message:
 			msg := payload.Message
 			fmt.Printf("%s[%s]: %s%s\n", colorBlue, msg.GetFromId(), msg.GetContent(), colorGreen)
+
+			// Add received message to AI query context
+			contentMu.Lock()
+			*content = ai.AIAddContent(*content, msg.GetFromId(), msg.GetContent())
+			contentMu.Unlock()
 
 		case *pb.Envelope_Error:
 			errMsg := payload.Error
