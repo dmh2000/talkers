@@ -136,80 +136,10 @@ func main() {
 	shutdownChan := make(chan struct{})
 
 	// Terminal input goroutine
-	go func() {
-		defer close(shutdownChan)
-		scanner := bufio.NewScanner(os.Stdin)
-
-		// Set input color to light green
-		fmt.Print(colorGreen)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			// Parse input format: <to_id>:<content>
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) != 2 {
-				fmt.Fprintf(os.Stderr, "Error: invalid input format, expected <to_id>:<content>\n")
-				continue
-			}
-
-			// Validate input length
-			if len(parts[1]) > maxInputLength {
-				fmt.Fprintf(os.Stderr, "Error: input exceeds maximum length of %d characters\n", maxInputLength)
-				continue
-			}
-
-			select {
-			case writeChan <- line:
-			case <-ctx.Done():
-				return
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: reading from stdin: %v\n", err)
-		}
-	}()
+	go terminalInput(writeChan, shutdownChan, ctx)
 
 	// Write loop goroutine
-	go func() {
-		for {
-			select {
-			case line := <-writeChan:
-				parts := strings.SplitN(line, ":", 2)
-				if len(parts) != 2 {
-					continue
-				}
-
-				toID := parts[0]
-				msgContent := parts[1]
-
-				// Construct and send message envelope
-				msgEnv := &pb.Envelope{
-					Payload: &pb.Envelope_Message{
-						Message: &pb.Message{
-							FromId:  clientID,
-							ToId:    toID,
-							Content: msgContent,
-						},
-					},
-				}
-
-				if err := framing.WriteEnvelope(stream, msgEnv); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: failed to send message: %v\n", err)
-					return
-				}
-
-				// Add sent message to AI query context
-				contextMu.Lock()
-				queryContext = ai.AIAddContext(queryContext, clientID, msgContent)
-				contextMu.Unlock()
-
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	go writeLoop(writeChan, stream, clientID, &queryContext, &contextMu, ctx)
 
 	// Wait for shutdown signal, read error, or stdin close
 	select {
@@ -228,6 +158,82 @@ func main() {
 	cancel()
 	_ = stream.Close()
 	_ = conn.CloseWithError(0, "client shutting down")
+}
+
+// terminalInput reads lines from stdin, validates format and length, and sends them to writeChan.
+func terminalInput(writeChan chan<- string, done chan struct{}, ctx context.Context) {
+	defer close(done)
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// Set input color to light green
+	fmt.Print(colorGreen)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Parse input format: <to_id>:<content>
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: invalid input format, expected <to_id>:<content>\n")
+			continue
+		}
+
+		// Validate input length
+		if len(parts[1]) > maxInputLength {
+			fmt.Fprintf(os.Stderr, "Error: input exceeds maximum length of %d characters\n", maxInputLength)
+			continue
+		}
+
+		select {
+		case writeChan <- line:
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: reading from stdin: %v\n", err)
+	}
+}
+
+// writeLoop reads messages from writeChan, sends them as envelopes, and updates the AI query context.
+func writeLoop(writeChan <-chan string, stream *quic.Stream, clientID string, queryContext *[]string, contextMu *sync.Mutex, ctx context.Context) {
+	for {
+		select {
+		case line := <-writeChan:
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+
+			toID := parts[0]
+			msgContent := parts[1]
+
+			// Construct and send message envelope
+			msgEnv := &pb.Envelope{
+				Payload: &pb.Envelope_Message{
+					Message: &pb.Message{
+						FromId:  clientID,
+						ToId:    toID,
+						Content: msgContent,
+					},
+				},
+			}
+
+			if err := framing.WriteEnvelope(stream, msgEnv); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: failed to send message: %v\n", err)
+				return
+			}
+
+			// Add sent message to AI query context
+			contextMu.Lock()
+			*queryContext = ai.AIAddContext(*queryContext, clientID, msgContent)
+			contextMu.Unlock()
+
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // readLoop continuously reads envelopes from the stream and processes them
